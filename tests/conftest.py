@@ -6,6 +6,7 @@ from claude_option.broker.api import BrokerApiServer
 from claude_option.broker.database import Database
 from claude_option.broker.manager import QuestionBroker
 from claude_option.hooks.protocol import BrokerClient
+from claude_option.utils.platform import IS_WINDOWS
 from claude_option.utils.security import load_or_create_api_token
 
 QUESTIONS = [
@@ -46,12 +47,20 @@ def broker(db):
     return QuestionBroker(db, timeout_seconds=600)
 
 
-@pytest.fixture
-def api(tmp_path, broker):
+TRANSPORTS = ["tcp"] if IS_WINDOWS else ["unix", "tcp"]
+
+
+@pytest.fixture(params=TRANSPORTS)
+def api(request, tmp_path, broker):
+    """A live broker API on a background thread, over each transport this OS supports."""
     run = tmp_path / "run"
     token = load_or_create_api_token(run / "api.token")
-    server = BrokerApiServer(broker, run / "broker.sock", token, lambda: {"test": True}, long_poll_max=5)
+    stopped = threading.Event()
+    server = BrokerApiServer(broker, run, token, lambda: {"test": True, "pid": 0}, long_poll_max=5,
+                             transport=request.param, on_shutdown=stopped.set)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
-    yield BrokerClient(run / "broker.sock", run / "api.token")
+    client = BrokerClient(run / "endpoint.json", run / "api.token")
+    client.server, client.stopped, client.run_dir = server, stopped, run
+    yield client
     server.shutdown()

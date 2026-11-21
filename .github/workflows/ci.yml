@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: tests (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -e .
+      - name: Test
+        run: python -m pytest -q
+
+  windows-install:
+    name: Windows install + broker + hook (PowerShell 5.1)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install.ps1
+        run: |
+          powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Check generated files
+        run: |
+          $hook = (Get-Content .claude\settings.json -Raw | ConvertFrom-Json).hooks.PreToolUse[0].hooks[0]
+          if ($hook.args -notcontains 'claude_option.hooks.pre_tool_use') { throw 'hook is not in exec form' }
+          if (-not (Test-Path $hook.command)) { throw "hook interpreter missing: $($hook.command)" }
+          $cfg = Get-Content claude-mod\hooks\config.ts -Raw
+          if ($cfg -match '\\') { throw 'config.ts contains backslashes' }
+          icacls .env
+          icacls data
+      - name: Start broker (no Telegram)
+        run: |
+          powershell -ExecutionPolicy Bypass -File scripts\start.ps1 --no-telegram
+          if ($LASTEXITCODE -ne 0) { Get-Content data\broker.out.log -ErrorAction SilentlyContinue; exit 1 }
+          Get-Content data\run\endpoint.json
+      - name: Hook answers from the broker (exec form, non-ASCII)
+        run: |
+          $py = '.venv\Scripts\python.exe'
+          & $py scripts\ci_hook_smoke.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Status and stop
+        if: always()
+        run: |
+          powershell -ExecutionPolicy Bypass -File scripts\status.ps1
+          powershell -ExecutionPolicy Bypass -File scripts\stop.ps1
+          if (Test-Path data\run\endpoint.json) { throw 'broker did not shut down cleanly' }
+      - name: Logs
+        if: failure()
+        run: |
+          Get-Content data\broker.log -ErrorAction SilentlyContinue
+          Get-Content data\broker.out.log -ErrorAction SilentlyContinue
+          Get-Content data\hook.log -ErrorAction SilentlyContinue

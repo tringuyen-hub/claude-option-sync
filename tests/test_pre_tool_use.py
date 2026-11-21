@@ -63,3 +63,34 @@ def test_standalone_telegram_mode_creates_request(api, broker):
     broker.select(q["question_id"], [q["options"][1]["option_id"]], source="telegram")
     t.join(10)
     assert result["out"]["hookSpecificOutput"]["updatedInput"]["answers"] == {"Which implementation should I use?": "C++"}
+
+
+VI_QUESTIONS = [{"question": "Bạn muốn dùng ngôn ngữ nào?", "header": "Ngôn ngữ", "multiSelect": False,
+                 "options": [{"label": "Tiếng Việt", "description": "Việt"},
+                             {"label": "English", "description": "Anh"}]}]
+
+
+def test_hook_process_round_trips_unicode_under_legacy_code_page(api, broker, tmp_path):
+    """Run the real hook process the way Claude Code does, with stdio forced to cp1252 as on
+    Windows: non-ASCII questions and answers must survive in both directions."""
+    import json
+    import os
+    import subprocess
+    import sys
+
+    root = tmp_path / "proj"
+    (root / "config").mkdir(parents=True)
+    (root / "config" / "settings.yaml").write_text(
+        f"broker:\n  run_dir: {json.dumps(api.run_dir.as_posix())}\n", encoding="utf-8")
+    s = broker.ensure_question(session_id="sess", tool_use_id="toolu_vi", questions=VI_QUESTIONS)
+    q = s["questions"][0]
+    broker.select(q["question_id"], [q["options"][0]["option_id"]], source="telegram")
+    event = {"session_id": "sess", "tool_use_id": "toolu_vi", "tool_name": "AskUserQuestion",
+             "tool_input": {"questions": VI_QUESTIONS}, "cwd": str(root)}
+    env = {**os.environ, "CLAUDE_OPTION_ROOT": str(root), "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"}
+    proc = subprocess.run([sys.executable, "-m", "claude_option.hooks.pre_tool_use"],
+                          input=json.dumps(event, ensure_ascii=False).encode("utf-8"),
+                          capture_output=True, env=env, timeout=30)
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout.decode("ascii"))["hookSpecificOutput"]
+    assert out["updatedInput"]["answers"] == {"Bạn muốn dùng ngôn ngữ nào?": "Tiếng Việt"}

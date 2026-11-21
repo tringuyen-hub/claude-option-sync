@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
+import sys
 from pathlib import Path
 
 _TOKEN_RE = re.compile(r"\b\d{6,}:[A-Za-z0-9_-]{30,}\b")
@@ -18,10 +19,11 @@ class RedactFilter(logging.Filter):
 
 
 def setup_logging(log_file: Path | None = None, level: int = logging.INFO) -> None:
-    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    # No console under pythonw.exe (Windows autostart): sys.stderr is None there.
+    handlers: list[logging.Handler] = [logging.StreamHandler()] if sys.stderr is not None else []
     if log_file:
         log_file.parent.mkdir(parents=True, exist_ok=True)
-        handlers.append(logging.FileHandler(log_file))
+        handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
     for h in handlers:
         h.addFilter(RedactFilter())
         h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))

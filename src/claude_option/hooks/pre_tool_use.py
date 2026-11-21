@@ -21,7 +21,7 @@ def _log(settings, record: dict) -> None:
     try:
         path = settings.project_root / "data" / "hook.log"
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a") as fh:
+        with path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps({"ts": time.time(), **record}, ensure_ascii=False) + "\n")
     except OSError:
         pass
@@ -91,10 +91,11 @@ def decide(event: dict, client: BrokerClient, standalone_mode: str = "native") -
 def main() -> int:
     settings = load_settings()
     try:
-        event = json.loads(sys.stdin.read() or "{}")
-    except json.JSONDecodeError:
+        # bytes, not text: on Windows sys.stdin decodes with the ANSI code page, not UTF-8
+        event = json.loads(sys.stdin.buffer.read().decode("utf-8") or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
         return 0
-    client = BrokerClient(settings.socket_path, settings.api_token_path)
+    client = BrokerClient.from_settings(settings)
     record = {"tool": event.get("tool_name"), "session_id": event.get("session_id"),
               "tool_use_id": event.get("tool_use_id"), "had_answers": bool((event.get("tool_input") or {}).get("answers"))}
     try:
@@ -106,7 +107,7 @@ def main() -> int:
     _log(settings, {**record, "result": "passthrough" if out is None else
                     out["hookSpecificOutput"]["permissionDecision"]})
     if out is not None:
-        sys.stdout.write(json.dumps(out, ensure_ascii=False))
+        sys.stdout.write(json.dumps(out))   # ASCII-only JSON: safe under any console code page
     return 0
 
 

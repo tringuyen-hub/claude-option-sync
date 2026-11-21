@@ -1,23 +1,57 @@
-"""The Unix-socket API exactly as the mod uses it (ensure, wait, select, cancel), plus session isolation."""
+"""The local API exactly as the mod uses it (ensure, wait, select, cancel), over each transport,
+plus authentication, browser-origin refusal, shutdown and session isolation."""
+import json
 import threading
 import time
 
 import httpx
 
+from claude_option.utils.platform import is_private
+
 from .conftest import QUESTIONS
 
 
+def _raw(api, path, headers=None):
+    ep = json.loads(api.endpoint_path.read_text())
+    if ep["transport"] == "unix":
+        c = httpx.Client(transport=httpx.HTTPTransport(uds=ep["socket"]), base_url="http://broker")
+    else:
+        c = httpx.Client(base_url=ep["url"], trust_env=False)
+    with c:
+        return c.get(path, headers=headers or {})
+
+
+def test_endpoint_file_describes_transport(api):
+    ep = json.loads(api.endpoint_path.read_text())
+    assert ep["transport"] == api.server.transport
+    if ep["transport"] == "tcp":
+        assert ep["host"] == "127.0.0.1" and ep["port"] > 0
+        assert api.server._server.server_address[0] == "127.0.0.1"   # loopback only
+
+
 def test_auth_required(api):
-    transport = httpx.HTTPTransport(uds=str(api.socket_path))
-    with httpx.Client(transport=transport, base_url="http://broker") as c:
-        assert c.get("/v1/health").status_code == 401
-        assert c.get("/v1/health", headers={"Authorization": "Bearer nope"}).status_code == 401
+    assert _raw(api, "/v1/health").status_code == 401
+    assert _raw(api, "/v1/health", {"Authorization": "Bearer nope"}).status_code == 401
+    assert api.health()["test"] is True
 
 
-def test_socket_is_private(api):
-    assert (api.socket_path.stat().st_mode & 0o777) == 0o600
-    assert (api.socket_path.parent.stat().st_mode & 0o777) == 0o700
-    assert (api.token_path.stat().st_mode & 0o777) == 0o600
+def test_browser_origin_refused_even_with_token(api):
+    token = api.token_path.read_text().strip()
+    r = _raw(api, "/v1/health", {"Authorization": f"Bearer {token}", "Origin": "https://evil.example"})
+    assert r.status_code == 403
+
+
+def test_files_are_private(api):
+    assert is_private(api.token_path)
+    assert is_private(api.endpoint_path)
+    assert is_private(api.run_dir)
+    if api.server.transport == "unix":
+        assert is_private(api.server.socket_path)
+
+
+def test_shutdown_endpoint(api):
+    status, body = api.request("POST", "/v1/shutdown", json={})
+    assert status == 200 and body["stopping"] and api.stopped.is_set()
 
 
 def test_ensure_wait_select_flow(api):
@@ -58,3 +92,16 @@ def test_session_isolation(api, broker):
     api.request("POST", "/v1/sessions/B/cancel", json={"reason": "ended"})
     assert broker.get_state(b["request_id"])["status"] == "CANCELLED"
     assert broker.get_state(a["request_id"])["status"] == "ANSWERED"
+
+
+def test_unread_body_does_not_poison_keepalive_connection(api):
+    """Two requests on one kept-alive connection; the first carries a body its route ignores."""
+    token = api.token_path.read_text().strip()
+    ep = json.loads(api.endpoint_path.read_text())
+    kw = ({"transport": httpx.HTTPTransport(uds=ep["socket"]), "base_url": "http://broker"}
+          if ep["transport"] == "unix" else {"base_url": ep["url"], "trust_env": False})
+    with httpx.Client(headers={"Authorization": f"Bearer {token}"}, **kw) as c:
+        assert c.request("GET", "/v1/health", content=b'{"ignored": true}').status_code == 200
+        assert c.get("/v1/health").status_code == 200
+        assert c.post("/v1/shutdown", json={}).status_code == 200
+        assert c.get("/v1/health").status_code == 200

@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import contextlib
-import os
 import sqlite3
 import threading
 from pathlib import Path
 
+from ..utils.platform import make_private
 from .migrations import migrate
 
 
@@ -23,7 +23,7 @@ class Database:
         for suffix in ("", "-wal", "-shm"):
             p = Path(str(self.path) + suffix)
             if p.exists():
-                os.chmod(p, 0o600)
+                make_private(p, is_dir=False)
 
     def _new_conn(self) -> sqlite3.Connection:
         # isolation_level=None: we issue BEGIN/COMMIT ourselves.

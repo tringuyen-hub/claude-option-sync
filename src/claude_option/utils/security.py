@@ -7,6 +7,8 @@ import os
 import secrets
 from pathlib import Path
 
+from .platform import make_private
+
 # Crockford-like alphabet without easily confused characters (0/O, 1/I/L, U).
 ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ"
 
@@ -38,22 +40,22 @@ def sha256_text(text: str) -> str:
 
 def ensure_private_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
-    os.chmod(path, 0o700)
+    make_private(path, is_dir=True)
 
 
 def write_private_file(path: Path, content: str) -> None:
     ensure_private_dir(path.parent)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as fh:
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
         fh.write(content)
-    os.chmod(path, 0o600)
+    make_private(path, is_dir=False)
 
 
 def load_or_create_api_token(path: Path) -> str:
     if path.exists():
-        token = path.read_text().strip()
+        token = path.read_text(encoding="utf-8").strip()
         if len(token) >= 32:
-            os.chmod(path, 0o600)
+            make_private(path, is_dir=False)
             return token
     token = secrets.token_urlsafe(32)
     write_private_file(path, token)

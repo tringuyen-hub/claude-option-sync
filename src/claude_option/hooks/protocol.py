@@ -1,6 +1,11 @@
-"""Client for the broker's Unix-socket API (used by the PreToolUse hook and the CLI)."""
+"""Client for the broker's local API (used by the PreToolUse hook and the CLI).
+
+The running broker writes endpoint.json; the client follows it, so the same code
+works over a Unix socket (Linux/macOS) and over 127.0.0.1 TCP (Windows).
+"""
 from __future__ import annotations
 
+import json as _json
 from pathlib import Path
 
 import httpx
@@ -11,17 +16,31 @@ class BrokerUnavailable(RuntimeError):
 
 
 class BrokerClient:
-    def __init__(self, socket_path: Path, token_path: Path):
-        self.socket_path = Path(socket_path)
+    def __init__(self, endpoint_path: Path, token_path: Path):
+        self.endpoint_path = Path(endpoint_path)
         self.token_path = Path(token_path)
 
+    @classmethod
+    def from_settings(cls, settings) -> "BrokerClient":
+        return cls(settings.endpoint_path, settings.api_token_path)
+
     def _client(self, timeout: float) -> httpx.Client:
-        if not self.socket_path.exists() or not self.token_path.exists():
-            raise BrokerUnavailable("broker is not running")
-        token = self.token_path.read_text().strip()
-        transport = httpx.HTTPTransport(uds=str(self.socket_path))
-        return httpx.Client(transport=transport, base_url="http://broker",
-                            headers={"Authorization": f"Bearer {token}"}, timeout=timeout)
+        try:
+            endpoint = _json.loads(self.endpoint_path.read_text(encoding="utf-8"))
+            token = self.token_path.read_text(encoding="utf-8").strip()
+        except (OSError, ValueError):
+            raise BrokerUnavailable("broker is not running") from None
+        headers = {"Authorization": f"Bearer {token}"}
+        if endpoint.get("transport") == "unix":
+            if not Path(endpoint["socket"]).exists():
+                raise BrokerUnavailable("broker is not running")
+            transport = httpx.HTTPTransport(uds=endpoint["socket"])
+            return httpx.Client(transport=transport, base_url="http://broker", headers=headers, timeout=timeout)
+        if endpoint.get("transport") == "tcp":
+            # trust_env=False: never route the local API through an HTTP(S)_PROXY
+            return httpx.Client(base_url=f"http://127.0.0.1:{int(endpoint['port'])}", headers=headers,
+                                timeout=timeout, trust_env=False)
+        raise BrokerUnavailable(f"unknown broker transport {endpoint.get('transport')!r}")
 
     def request(self, method: str, path: str, *, json: dict | None = None, params: dict | None = None,
                 timeout: float = 10) -> tuple[int, dict]:

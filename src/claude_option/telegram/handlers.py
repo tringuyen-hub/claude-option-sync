@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import os
 
 from ..broker.manager import QuestionBroker
 from ..broker.models import ValidationError
@@ -12,6 +13,9 @@ from .notifications import TelegramSync
 from .pairing import attempt_pairing, get_owner
 
 log = logging.getLogger(__name__)
+
+PAIR_COMMAND = (r".venv\Scripts\python -m claude_option.cli pair-code" if os.name == "nt"
+                else ".venv/bin/python -m claude_option.cli pair-code")
 
 COMMANDS = [
     ("start", "Welcome and pairing instructions"),
@@ -80,7 +84,7 @@ class UpdateHandler:
             if owner is None:
                 self._reply(chat["id"],
                             "👋 <b>Claude Option Sync</b>\n\nThis bot is not paired yet. On the computer running "
-                            "Claude Code, run:\n<code>.venv/bin/python -m claude_option.cli pair-code</code>\n"
+                            "Claude Code, run:\n<code>" + PAIR_COMMAND + "</code>\n"
                             "then send <code>/pair CODE</code> here within 5 minutes.")
             elif self._is_owner_chat(user.get("id"), chat):
                 self._reply(chat["id"], "👋 You are paired. Claude Code questions will appear here. /help lists commands.")

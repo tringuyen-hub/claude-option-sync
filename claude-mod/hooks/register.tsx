@@ -6,7 +6,7 @@ import { RUN_DIR } from './config'
 
 const PANE = 'claude-option'
 const LETTERS = 'ABCDEFGHIJ'
-const SOCKET = `${RUN_DIR}/broker.sock`
+const ENDPOINT_FILE = `${RUN_DIR}/endpoint.json`
 const TOKEN_FILE = `${RUN_DIR}/api.token`
 const LONG_POLL_SECONDS = 15
 const KEEP_RESOLVED = 3
@@ -22,18 +22,47 @@ const drafts = atom({ plugin: 'question-sync', key: 'drafts' } as const, {} as R
 type $T = EngineInterface
 type BrokerReply = { status: number; data: any }
 
-// ------------------------------------------------------------------ broker bridge (Unix socket)
+// ------------------------------------------------------------------ broker bridge
+// The broker writes endpoint.json: a Unix socket on Linux/macOS, 127.0.0.1:<port> on Windows.
 
+type Endpoint = { base: string; socketPath?: string }
 let cachedToken: string | undefined
+let cachedEndpoint: Endpoint | undefined
 
-async function broker($: $T, method: 'GET' | 'POST', path: string, body?: unknown): Promise<BrokerReply> {
+async function endpoint($: $T): Promise<Endpoint> {
+  if (cachedEndpoint === undefined) {
+    const e = JSON.parse(String(await $.fs.read(ENDPOINT_FILE)))
+    cachedEndpoint =
+      e.transport === 'unix'
+        ? { base: 'http://broker', socketPath: String(e.socket) }
+        : { base: `http://127.0.0.1:${Number(e.port)}` }
+  }
+  return cachedEndpoint
+}
+
+async function broker(
+  $: $T,
+  method: 'GET' | 'POST',
+  path: string,
+  body?: unknown,
+  retried = false,
+): Promise<BrokerReply> {
   if (cachedToken === undefined) cachedToken = String(await $.fs.read(TOKEN_FILE)).trim()
-  const res = await $.http.fetch(`http://broker${path}`, {
-    method,
-    socketPath: SOCKET,
-    headers: { Authorization: `Bearer ${cachedToken}`, 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  })
+  const ep = await endpoint($)
+  let res
+  try {
+    res = await $.http.fetch(`${ep.base}${path}`, {
+      method,
+      socketPath: ep.socketPath,
+      headers: { Authorization: `Bearer ${cachedToken}`, 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    })
+  } catch (err) {
+    cachedEndpoint = undefined // broker restarted: re-read its port or socket and try once more
+    cachedToken = undefined
+    if (!retried) return broker($, method, path, body, true)
+    throw err
+  }
   if (res.status === 401) cachedToken = undefined // token rotated by a broker restart
   let data: any = {}
   try {

@@ -5,7 +5,8 @@ The project is described in README.md. Python package: `src/claude_option/`. VS 
 Rules for this repo:
 - Never print, cat, grep or otherwise display `.env`, and never echo the Telegram bot token.
 - The mod's source of truth is `claude-mod/`. After editing it, run `claude plugin validate claude-mod`.
-- Paths in `.claude/settings.json` and `claude-mod/hooks/config.ts` are written by `scripts/install.sh`. Re-run the script; don't edit those paths by hand.
+- Paths in `.claude/settings.json` and `claude-mod/hooks/config.ts` are written by `scripts/install.sh` / `scripts/install.ps1`. Re-run the script; don't edit those paths by hand.
+- The code must keep working on Linux, macOS and Windows. Put OS differences in `src/claude_option/utils/platform.py`. Open text files with `encoding="utf-8"`. The broker API is a Unix socket or 127.0.0.1 TCP; clients find out which by reading `data/run/endpoint.json`.
 
 ## Synchronized User Choice Workflow
 

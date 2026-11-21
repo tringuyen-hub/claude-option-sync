@@ -49,42 +49,13 @@ mkdir -p data/run && chmod 700 data data/run
 echo "ok: $ROOT/data (0700)"
 
 say "Mod configuration"
-cat > claude-mod/hooks/config.ts <<EOF
-// Written by scripts/install.sh: the broker's private run directory (absolute).
-export const RUN_DIR = '$ROOT/data/run'
-EOF
-echo "ok: claude-mod/hooks/config.ts -> $ROOT/data/run"
-
-# Merge our PreToolUse hook into a settings.json without touching anything else.
-add_hook() {
-  "$ROOT/.venv/bin/python" - "$1" "$ROOT/scripts/run_hook.sh" <<'PYEOF'
-import json, os, sys
-path, cmd = sys.argv[1], sys.argv[2]
-data = {}
-if os.path.exists(path):
-    with open(path) as f:
-        data = json.load(f)
-pre = data.setdefault("hooks", {}).setdefault("PreToolUse", [])
-# drop any older copy of our hook (e.g. from a previous install path)
-for entry in pre:
-    entry["hooks"] = [h for h in entry.get("hooks", []) if not h.get("command", "").endswith("/scripts/run_hook.sh")]
-pre[:] = [e for e in pre if e.get("hooks")]
-pre.append({"matcher": "AskUserQuestion", "hooks": [{"type": "command", "command": cmd, "timeout": 900}]})
-os.makedirs(os.path.dirname(path), exist_ok=True)
-tmp = path + ".tmp"
-with open(tmp, "w") as f:
-    json.dump(data, f, indent=2)
-    f.write("\n")
-os.replace(tmp, path)
-print("ok:", path)
-PYEOF
-}
+.venv/bin/python -m claude_option.cli mod-config
 
 say "Claude Code hook (PreToolUse / AskUserQuestion)"
-add_hook "$ROOT/.claude/settings.json"
+.venv/bin/python -m claude_option.cli install-hook --settings "$ROOT/.claude/settings.json"
 if [[ $GLOBAL == 1 ]]; then
   [[ -f "$HOME/.claude/settings.json" ]] && cp "$HOME/.claude/settings.json" "$HOME/.claude/settings.json.bak-claude-option"
-  add_hook "$HOME/.claude/settings.json"
+  .venv/bin/python -m claude_option.cli install-hook --settings "$HOME/.claude/settings.json"
 fi
 
 if [[ $MOD == 1 ]]; then
@@ -117,7 +88,7 @@ UMask=0077
 [Install]
 WantedBy=default.target
 EOF
-  "$ROOT/scripts/stop.sh" >/dev/null 2>&1 || true
+  .venv/bin/python -m claude_option.cli stop >/dev/null 2>&1 || true
   systemctl --user daemon-reload
   systemctl --user enable --now claude-option.service
   echo "ok: systemctl --user status claude-option"

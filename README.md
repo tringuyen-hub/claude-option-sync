@@ -39,7 +39,9 @@ Only the paired owner can use `/status`, `/pending`, `/history` and `/id`, and p
 
 ## 2. Install on a new PC
 
-**Requirements:** Linux (tested on Ubuntu 22.04; macOS should work but is untested; Windows is not supported), Python 3.10 or newer, and Claude Code with the VS Code extension at version 2.1.304 or later (`claude --version`).
+**Requirements:** Linux, macOS or Windows 10/11, Python 3.10 or newer, and Claude Code with the VS Code extension at version 2.1.304 or later (`claude --version`).
+
+The steps below use Linux/macOS commands. **On Windows, follow [Install on Windows](#install-on-windows) instead.** It's the same process with PowerShell scripts.
 
 ### Step 1: Copy the project
 
@@ -127,6 +129,43 @@ The question should appear in VS Code and in Telegram at the same time.
 
 ---
 
+### Install on Windows
+
+Everything works the same way on Windows. The only difference is how the VS Code panel and the hook reach the broker: Windows Python has no Unix sockets, so the broker listens on **127.0.0.1 only**, on a random port. Every request still needs the secret token, and requests from web browsers are refused.
+
+1. **Install Python 3.10+** from [python.org](https://www.python.org/downloads/) and tick *Add python.exe to PATH*. Git for Windows is recommended for Claude Code but this project doesn't need it.
+2. **Get the project** (PowerShell):
+   ```powershell
+   git clone https://github.com/tringuyen-hub/claude-option-sync.git $HOME\claude_option
+   cd $HOME\claude_option
+   git switch windows          # until this branch is merged into main
+   Copy-Item .env.example .env
+   notepad .env                # set TELEGRAM_BOT_TOKEN=<token from BotFather>
+   ```
+3. **Run the installer.** `-All` does everything; or pick `-Global`, `-Mod`, `-Autostart`:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -All
+   ```
+   | Flag | What it does |
+   | --- | --- |
+   | *(none)* | `.venv`, dependencies, `.env` and `data\` restricted to your user only (`icacls`), mod config, project hook |
+   | `-Global` | Hook in `%USERPROFILE%\.claude\settings.json` for every project (backup saved) |
+   | `-Mod` | VS Code panel installed as a user plugin |
+   | `-Autostart` | Task Scheduler task `ClaudeOptionSync` starts the broker at logon, without a console window |
+4. **Start it** (skip if you used `-Autostart`) **and pair**:
+   ```powershell
+   scripts\start.ps1
+   scripts\status.ps1
+   .venv\Scripts\python -m claude_option.cli pair-code      # then send /pair CODE to your bot
+   ```
+5. **Restart Claude Code** in VS Code.
+
+On Windows the hook is written in Claude Code's *exec form* (`"command": "...\\python.exe", "args": ["-m", "claude_option.hooks.pre_tool_use"]`). It runs without a shell, so it works with or without Git Bash and with spaces in the path.
+
+Windows commands: `scripts\start.ps1`, `scripts\stop.ps1`, `scripts\status.ps1`, `scripts\uninstall.ps1`. If PowerShell refuses to run scripts, prefix them with `powershell -ExecutionPolicy Bypass -File`.
+
+---
+
 ## 3. Use it in another Claude Code session or project on the same PC
 
 The broker serves every session on the PC. Each question is tied to its own session and tool call, so answers never cross between sessions. Each session needs two things:
@@ -173,12 +212,12 @@ Other commands:
 
 | Path | What |
 | --- | --- |
-| `.env` | Bot token (mode 0600, never committed, never printed) |
+| `.env` | Bot token (only your user can read it: mode 0600, or an `icacls` ACL on Windows; never committed, never printed) |
 | `config/settings.yaml` | Shared defaults: timeout, hook mode |
 | `config/settings.local.yaml` | Per-machine overrides, e.g. `expected_bot_username` (git-ignored) |
 | `.claude/settings.json`, `claude-mod/hooks/config.ts` | Written by `install.sh` with this machine's absolute paths (git-ignored) |
 | `data/claude_option.db` | SQLite database: questions, answers, pairing, audit trail |
-| `data/run/broker.sock`, `data/run/api.token` | Local API: a Unix socket plus a random secret, both 0600 in a 0700 folder. No network port is opened |
+| `data/run/api.token`, `data/run/endpoint.json` | Local API secret, and how to reach the broker: a Unix socket (`broker.sock`, Linux/macOS) or `127.0.0.1:<port>` (Windows). Private to your user; nothing listens on a network interface |
 | `data/broker.log`, `data/hook.log` | Logs (the token is redacted) |
 | `claude-mod/` | The VS Code panel plugin (`question-sync`) |
 
@@ -194,7 +233,9 @@ Other commands:
 | No panel in VS Code, only the built-in dialog | Is the plugin installed (`claude plugin list`)? Restart the session. Is the broker running? |
 | Panel appears but Claude doesn't continue | Check the last lines of `data/hook.log` and `data/hook.stderr.log` |
 | Pairing code rejected | It expired (5 min), was already used, or there were 5 wrong tries. Run `pair-code` again |
-| Moved the folder | Run `./scripts/install.sh` again (plus `--global` / `--mod` / `--systemd` if you used them) |
+| Moved the folder | Run `./scripts/install.sh` (Windows: `scripts\install.ps1`) again, with the same flags you used before |
+| Windows: "running scripts is disabled" | Run `powershell -ExecutionPolicy Bypass -File scripts\install.ps1` |
+| Windows: no panel, hook says broker unavailable | `scripts\status.ps1`; if a firewall prompt appeared, allow *Private* only (the broker only uses 127.0.0.1) |
 
 ---
 
@@ -207,7 +248,9 @@ claude plugin uninstall question-sync
 claude plugin marketplace remove question-sync-local
 ```
 
-Then delete the `AskUserQuestion` entry under `hooks.PreToolUse` in `.claude/settings.json`, and in `~/.claude/settings.json` if you used `--global`.
+Then remove the hook: `.venv/bin/python -m claude_option.cli uninstall-hook --settings .claude/settings.json` (and `--settings ~/.claude/settings.json` if you used `--global`).
+
+On Windows, `scripts\uninstall.ps1` does all of this, including removing the scheduled task.
 
 ---
 

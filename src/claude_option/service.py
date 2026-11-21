@@ -1,7 +1,6 @@
-"""The broker service: API socket + expiry + Telegram poller + Telegram sync, one process."""
+"""The broker service: local API + expiry + Telegram poller + Telegram sync, one process."""
 from __future__ import annotations
 
-import fcntl
 import logging
 import os
 import signal
@@ -17,6 +16,7 @@ from .telegram.bot import TelegramPoller
 from .telegram.handlers import COMMANDS, UpdateHandler
 from .telegram.notifications import TelegramSync
 from .telegram.pairing import get_owner
+from .utils.platform import LockHeld, lock_file
 from .utils.security import ensure_private_dir, load_or_create_api_token, write_private_file
 
 log = logging.getLogger(__name__)
@@ -28,13 +28,10 @@ class AlreadyRunning(RuntimeError):
 
 def acquire_lock(settings: Settings):
     ensure_private_dir(settings.run_dir)
-    fh = open(settings.lock_path, "a+")
     try:
-        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        fh.close()
+        return lock_file(settings.lock_path)
+    except LockHeld:
         raise AlreadyRunning("another broker instance is running") from None
-    return fh
 
 
 def run_service(settings: Settings, *, with_telegram: bool = True) -> int:
@@ -71,7 +68,9 @@ def run_service(settings: Settings, *, with_telegram: bool = True) -> int:
         threads.append(threading.Thread(target=sync.run_forever, args=(stop,), name="tg-sync", daemon=True))
         log.info("Telegram bot @%s connected; owner paired: %s", me["username"], get_owner(db) is not None)
 
-    server = BrokerApiServer(broker, settings.socket_path, token, status_provider, settings.long_poll_max_seconds)
+    server = BrokerApiServer(broker, settings.run_dir, token, status_provider, settings.long_poll_max_seconds,
+                             transport=settings.transport, port=settings.api_port, on_shutdown=stop.set)
+    status["transport"] = settings.transport
     threads.append(threading.Thread(target=server.serve_forever, name="api", daemon=True))
 
     def expiry_loop():
@@ -87,11 +86,12 @@ def run_service(settings: Settings, *, with_telegram: bool = True) -> int:
         log.info("signal %s: stopping", signum)
         stop.set()
 
-    signal.signal(signal.SIGTERM, on_signal)
-    signal.signal(signal.SIGINT, on_signal)
+    for name in ("SIGTERM", "SIGINT", "SIGBREAK"):   # SIGBREAK: Ctrl+Break on Windows
+        if hasattr(signal, name):
+            signal.signal(getattr(signal, name), on_signal)
     for t in threads:
         t.start()
-    log.info("broker listening on %s", settings.socket_path)
+    log.info("broker listening on %s", server.endpoint)
     while not stop.wait(1.0):
         pass
     server.shutdown()
