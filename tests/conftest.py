@@ -1,4 +1,7 @@
+import shutil
+import tempfile
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -53,7 +56,8 @@ TRANSPORTS = ["tcp"] if IS_WINDOWS else ["unix", "tcp"]
 @pytest.fixture(params=TRANSPORTS)
 def api(request, tmp_path, broker):
     """A live broker API on a background thread, over each transport this OS supports."""
-    run = tmp_path / "run"
+    # Unix sockets need a short path (macOS allows 104 bytes; pytest's tmp_path there is longer).
+    run = (Path(tempfile.mkdtemp(dir="/tmp")) if request.param == "unix" else tmp_path) / "run"
     token = load_or_create_api_token(run / "api.token")
     stopped = threading.Event()
     server = BrokerApiServer(broker, run, token, lambda: {"test": True, "pid": 0}, long_poll_max=5,
@@ -64,3 +68,5 @@ def api(request, tmp_path, broker):
     client.server, client.stopped, client.run_dir = server, stopped, run
     yield client
     server.shutdown()
+    if request.param == "unix":
+        shutil.rmtree(run.parent, ignore_errors=True)

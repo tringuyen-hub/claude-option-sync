@@ -9,6 +9,7 @@ import yaml
 from dotenv import dotenv_values
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+MAX_SOCKET_PATH = 100
 
 
 @dataclass
@@ -41,7 +42,13 @@ class Settings:
     def transport(self) -> str:
         if self.api_transport in ("unix", "tcp"):
             return self.api_transport
-        return "tcp" if os.name == "nt" else "unix"
+        if os.name == "nt":
+            return "tcp"
+        # A Unix socket path must fit in sun_path (104 bytes on macOS, 108 on Linux) and the
+        # VS Code mod allows about 100: a project in a deep folder falls back to 127.0.0.1 TCP.
+        if len(str(self.socket_path.resolve()).encode()) > MAX_SOCKET_PATH:
+            return "tcp"
+        return "unix"
 
     @property
     def api_token_path(self) -> Path:

@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -100,3 +101,15 @@ def test_background_broker_start_status_stop_over_tcp(root):
     assert stopped.returncode == 0 and "stopped" in stopped.stdout
     assert _cli(root, "status").returncode == 1
     assert not (root / "data" / "run" / "endpoint.json").exists()
+
+
+def test_auto_transport_falls_back_to_tcp_for_long_socket_paths(tmp_path):
+    from claude_option.config import load_settings
+    deep = tmp_path / ("d" * 120)
+    (deep / "config").mkdir(parents=True)
+    s = load_settings(root=deep)
+    assert s.api_transport == "auto"
+    assert s.transport == "tcp"
+    if not IS_WINDOWS:
+        short = load_settings(root=deep, overrides={"run_dir": Path("/tmp/co-run")})
+        assert short.transport == "unix"
