@@ -1,0 +1,6 @@
+{
+  "name": "question-sync",
+  "version": "0.1.0",
+  "description": "Mirrors AskUserQuestion into a VS Code panel and Telegram; the first answer committed by the broker wins.",
+  "types": "./types/index.d.ts"
+}

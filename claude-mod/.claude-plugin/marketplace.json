@@ -1,0 +1,5 @@
+{
+  "name": "question-sync-local",
+  "owner": { "name": "Tri Nguyen" },
+  "plugins": [{ "name": "question-sync", "source": "./" }]
+}

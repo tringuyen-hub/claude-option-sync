@@ -1,0 +1,25 @@
+# Claude Option Sync settings. Paths are relative to the project root.
+# Per-machine overrides go in config/settings.local.yaml (git-ignored), e.g.:
+#   expected_bot_username: my_bot     # broker refuses to start if .env holds another bot's token
+
+expected_bot_username: ""
+
+broker:
+  data_dir: data
+  database: data/claude_option.db
+  run_dir: data/run            # holds broker.sock (0600) and api.token (0600); dir is 0700
+  log_file: data/broker.log
+  question_timeout_seconds: 600
+  long_poll_max_seconds: 25
+
+telegram:
+  poll_timeout_seconds: 25
+  pairing_code_ttl_seconds: 300
+  max_pair_attempts: 5
+
+hook:
+  # What the PreToolUse hook does when no synchronized request exists for the call
+  # (e.g. the mod is not loaded):
+  #   native   - let Claude Code show its own dialog (safe default)
+  #   telegram - create the request and wait for a Telegram answer
+  standalone_mode: native
